@@ -1,0 +1,55 @@
+target C {
+    timeout: 50 ms
+}
+
+reactor GeneradorRapido {
+    state contador: int = 0
+
+    output dato: int
+
+    timer reloj(0, 5 ms)
+
+    reaction(reloj) -> dato {=
+        self->contador++;
+
+        printf("[Generador] Publico: %d\n", self->contador);
+
+        lf_set(dato, self->contador);
+    =}
+}
+
+reactor ConsumidorPeriodico {
+    input dato: int
+
+    state ultimo_dato: int = 0
+    state cantidad_recibida: int = 0
+    state cantidad_procesada: int = 0
+
+    timer reloj(0, 10 ms)
+
+    // Primero se declara la recepción.
+    reaction(dato) {=
+        self->ultimo_dato = dato->value;
+        self->cantidad_recibida++;
+    =}
+
+    // Después se declara el cálculo periódico.
+    reaction(reloj) {=
+        self->cantidad_procesada++;
+
+        printf(
+            "[Consumidor] Calculo %d | ultimo dato: %d"
+            " | recibidos: %d\n",
+            self->cantidad_procesada,
+            self->ultimo_dato,
+            self->cantidad_recibida
+        );
+    =}
+}
+
+main reactor PruebaMultirate {
+    generador = new GeneradorRapido()
+    consumidor = new ConsumidorPeriodico()
+
+    generador.dato -> consumidor.dato
+}

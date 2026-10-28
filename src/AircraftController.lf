@@ -1,0 +1,321 @@
+target C {
+    timeout: 20 sec
+}
+
+preamble {=
+#include <stdio.h>
+
+#define DIAG_BEGIN() \
+    tag_t diag_tag = lf_tag(); \
+    long long diag_logico_ns = \
+        (long long)lf_time_logical_elapsed(); \
+    long long diag_inicio_ns = \
+        (long long)lf_time_physical()
+
+#define DIAG_END(REACTOR, REACTION, PERIODO_NS) \
+    do { \
+        long long diag_fin_ns = \
+            (long long)lf_time_physical(); \
+        fprintf( \
+            stderr, \
+            "TRACE,%s,%s,%lld,%lld,%u,%lld,%lld,%lld\n", \
+            (REACTOR), \
+            (REACTION), \
+            (long long)(PERIODO_NS), \
+            diag_logico_ns, \
+            (unsigned int)diag_tag.microstep, \
+            diag_inicio_ns, \
+            diag_fin_ns, \
+            diag_fin_ns - diag_inicio_ns \
+        ); \
+    } while (0)
+=}
+
+// ============================================================
+// Referencia: 100 m/s inicialmente y 110 m/s desde t = 10 s.
+// Publicación cada 100 ms.
+// ============================================================
+reactor SpeedReference {
+    output referencia: double
+
+    state publicaciones: int = 0
+
+    timer reference_timer(0, 100 ms)
+
+    reaction(reference_timer) -> referencia {=
+        DIAG_BEGIN();
+        double ref;
+
+        if (self->publicaciones < 100) {
+            ref = 100.0;
+        } else {
+            ref = 110.0;
+        }
+
+        lf_set(referencia, ref);
+        self->publicaciones++;
+        DIAG_END("SpeedReference", "reference_timer", 100000000LL);
+    =}
+}
+
+// ============================================================
+// Planta longitudinal.
+// IMPORTANTE: publica/actualiza antes de recibir el nuevo empuje.
+// ============================================================
+reactor AircraftDynamics {
+    input empuje: double
+    output velocidad: double
+
+    state v: double = 80.0
+    state ultimo_empuje: double = 0.0
+
+    state ts: double = 0.01
+    state a_t: double = 20.0
+    state a_d: double = 0.1
+
+    timer dynamics_timer(10 ms, 10 ms)
+
+    // Estado inicial v[0], sin integrar.
+    reaction(startup) -> velocidad {=
+        DIAG_BEGIN();
+        lf_set(velocidad, self->v);
+        DIAG_END("AircraftDynamics", "inicio", 0LL);
+    =}
+
+    // Usa el comando almacenado en la actualización anterior.
+    reaction(dynamics_timer) -> velocidad {=
+        DIAG_BEGIN();
+        double aceleracion =
+            self->a_t * self->ultimo_empuje
+            - self->a_d * self->v;
+
+        self->v += self->ts * aceleracion;
+
+        lf_set(velocidad, self->v);
+        DIAG_END("AircraftDynamics", "dynamics_timer", 10000000LL);
+    =}
+
+    // Debe permanecer después de las reacciones anteriores.
+    reaction(empuje) {=
+        DIAG_BEGIN();
+        self->ultimo_empuje = empuje->value;
+        DIAG_END("AircraftDynamics", "recibir_empuje", 0LL);
+    =}
+}
+
+// ============================================================
+// Sensor: medición cada 5 ms.
+// Sesgo de -5 m/s durante el intervalo [5 s, 6 s).
+// La velocidad física simulada no se modifica directamente.
+// ============================================================
+reactor AirDataSensor {
+    input velocidad: double
+
+    output medicion: double
+    output sesgo: double
+
+    state ultima_velocidad: double = 80.0
+    state perturbacion: double = 0.0
+
+    timer sensor_timer(0, 5 ms)
+
+    // Sin período: cada uno se activa una sola vez.
+    timer inicio_perturbacion(5 sec)
+    timer fin_perturbacion(6 sec)
+
+    reaction(velocidad) {=
+        DIAG_BEGIN();
+        self->ultima_velocidad = velocidad->value;
+        DIAG_END("AirDataSensor", "recibir_velocidad", 0LL);
+    =}
+
+    // Deben declararse antes de la publicación periódica.
+    reaction(inicio_perturbacion) {=
+        DIAG_BEGIN();
+        self->perturbacion = -5.0;
+        DIAG_END("AirDataSensor", "inicio_perturbacion", 0LL);
+    =}
+
+    reaction(fin_perturbacion) {=
+        DIAG_BEGIN();
+        self->perturbacion = 0.0;
+        DIAG_END("AirDataSensor", "fin_perturbacion", 0LL);
+    =}
+
+    reaction(sensor_timer) -> medicion, sesgo {=
+        DIAG_BEGIN();
+        double v_med =
+            self->ultima_velocidad + self->perturbacion;
+
+        lf_set(medicion, v_med);
+        lf_set(sesgo, self->perturbacion);
+        DIAG_END("AirDataSensor", "sensor_timer", 5000000LL);
+    =}
+}
+// ============================================================
+// Controlador proporcional: cálculo cada 10 ms.
+// Las entradas se almacenan antes del cálculo periódico.
+// ============================================================
+reactor SpeedController(kp: double = 0.2) {
+    input referencia: double
+    input medicion: double
+
+    output error: double
+    output empuje: double
+
+    state ultima_referencia: double = 0.0
+    state ultima_medicion: double = 0.0
+
+    state referencia_recibida: int = 0
+    state medicion_recibida: int = 0
+
+    timer controller_timer(0, 10 ms)
+
+    reaction(referencia) {=
+        DIAG_BEGIN();
+        self->ultima_referencia = referencia->value;
+        self->referencia_recibida = 1;
+        DIAG_END("SpeedController", "recibir_referencia", 0LL);
+    =}
+
+    reaction(medicion) {=
+        DIAG_BEGIN();
+        self->ultima_medicion = medicion->value;
+        self->medicion_recibida = 1;
+        DIAG_END("SpeedController", "recibir_medicion", 0LL);
+    =}
+
+    reaction(controller_timer) -> error, empuje {=
+        DIAG_BEGIN();
+        if (self->referencia_recibida &&
+            self->medicion_recibida) {
+
+            double e =
+                self->ultima_referencia
+                - self->ultima_medicion;
+
+            double u = self->kp * e;
+
+            if (u < 0.0) {
+                u = 0.0;
+            } else if (u > 1.0) {
+                u = 1.0;
+            }
+
+            lf_set(error, e);
+            lf_set(empuje, u);
+        }
+        DIAG_END("SpeedController", "controller_timer", 10000000LL);
+    =}
+}
+
+// ============================================================
+// Monitor: almacena los últimos datos recibidos y publica
+// una fila cada 100 ms.
+//
+// El tiempo lógico se consulta mediante
+// lf_time_logical_elapsed() y se convierte de ns a s.
+//
+// Las marcas físicas de diagnóstico se registran por separado
+// mediante DIAG_BEGIN() y DIAG_END().
+// ============================================================
+
+reactor FlightMonitor {
+    input referencia: double
+    input velocidad: double
+    input medicion: double
+    input error: double
+    input empuje: double
+    input sesgo: double
+
+    state ref_guardada: double = 0.0
+    state v_guardada: double = 0.0
+    state med_guardada: double = 0.0
+    state error_guardado: double = 0.0
+    state empuje_guardado: double = 0.0
+    state sesgo_guardado: double = 0.0
+
+    state fila: int = 0
+
+    timer monitor_timer(0, 100 ms)
+
+    reaction(referencia, velocidad, medicion, error, empuje, sesgo) {=
+        DIAG_BEGIN();
+        if (referencia->is_present) {
+            self->ref_guardada = referencia->value;
+        }
+
+        if (velocidad->is_present) {
+            self->v_guardada = velocidad->value;
+        }
+
+        if (medicion->is_present) {
+            self->med_guardada = medicion->value;
+        }
+
+        if (error->is_present) {
+            self->error_guardado = error->value;
+        }
+
+        if (empuje->is_present) {
+            self->empuje_guardado = empuje->value;
+        }
+
+        if (sesgo->is_present) {
+            self->sesgo_guardado = sesgo->value;
+        }
+        DIAG_END("FlightMonitor", "recibir_datos", 0LL);
+
+    =}
+
+    reaction(monitor_timer) {=
+        DIAG_BEGIN();
+        double t_logico =
+            (double)lf_time_logical_elapsed() / 1e9;
+
+        if (self->fila == 0) {
+            printf(
+                "t_logico_s,referencia_m_s,velocidad_m_s,"
+                "medicion_m_s,error_m_s,empuje,sesgo_m_s\n"
+            );
+        }
+
+        printf(
+            "%.3f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f\n",
+            t_logico,
+            self->ref_guardada,
+            self->v_guardada,
+            self->med_guardada,
+            self->error_guardado,
+            self->empuje_guardado,
+            self->sesgo_guardado
+        );
+
+        self->fila++;
+        DIAG_END("FlightMonitor", "monitor_timer", 100000000LL);
+    =}
+}
+
+// ============================================================
+// Composición del sistema.
+// ============================================================
+main reactor AircraftController {
+    referencia = new SpeedReference()
+    planta = new AircraftDynamics()
+    sensor = new AirDataSensor()
+    controlador = new SpeedController(kp = 0.2)
+    monitor = new FlightMonitor()
+
+    referencia.referencia -> controlador.referencia
+
+    planta.velocidad -> sensor.velocidad
+    sensor.medicion -> controlador.medicion
+    controlador.empuje -> planta.empuje
+
+    referencia.referencia -> monitor.referencia
+    planta.velocidad -> monitor.velocidad
+    sensor.medicion -> monitor.medicion
+    controlador.error -> monitor.error
+    controlador.empuje -> monitor.empuje
+    sensor.sesgo -> monitor.sesgo
+}

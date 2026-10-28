@@ -1,0 +1,34 @@
+target C {
+    timeout: 1 sec
+}
+
+reactor Generador {
+    state contador: int = 0
+
+    output dato: int
+
+    timer reloj(0, 100 ms)
+
+    reaction(reloj) -> dato {=
+        self->contador++;
+
+        printf("[Generador] Publico: %d\n", self->contador);
+
+        lf_set(dato, self->contador);
+    =}
+}
+
+reactor Receptor {
+    input dato: int
+
+    reaction(dato) {=
+        printf("[Receptor] Recibi: %d\n", dato->value);
+    =}
+}
+
+main reactor PruebaPuertos {
+    generador = new Generador()
+    receptor = new Receptor()
+
+    generador.dato -> receptor.dato
+}

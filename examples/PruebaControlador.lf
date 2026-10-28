@@ -1,0 +1,141 @@
+target C {
+    timeout: 40 ms
+}
+
+// Fuente de entradas conocidas.
+// No representa todavía el sensor ni la referencia definitivos.
+reactor EntradasPrueba {
+    output referencia: double
+    output medicion: double
+
+    state muestra: int = 0
+
+    timer reloj(0, 10 ms)
+
+    reaction(startup) -> referencia {=
+        // Referencia fija en m/s.
+        lf_set(referencia, 100.0);
+    =}
+
+    reaction(reloj) -> medicion {=
+        double velocidad;
+
+        switch (self->muestra) {
+            case 0:
+                velocidad = 80.0;
+                break;
+
+            case 1:
+                velocidad = 95.0;
+                break;
+
+            case 2:
+                velocidad = 110.0;
+                break;
+
+            case 3:
+                velocidad = 20.0;
+                break;
+
+            default:
+                velocidad = 100.0;
+                break;
+        }
+
+        self->muestra++;
+        lf_set(medicion, velocidad);
+    =}
+}
+
+reactor SpeedController(kp: double = 0.02) {
+    input referencia: double
+    input medicion: double
+
+    output error: double
+    output empuje: double
+
+    // Valores retenidos entre eventos.
+    state ultima_referencia: double = 0.0
+    state ultima_medicion: double = 0.0
+
+    // Evitan calcular antes de recibir ambas entradas.
+    state referencia_recibida: int = 0
+    state medicion_recibida: int = 0
+
+    state calculos: int = 0
+
+    timer controller_timer(0, 10 ms)
+
+    // Las reacciones de recepción se declaran antes del cálculo.
+    reaction(referencia) {=
+        self->ultima_referencia = referencia->value;
+        self->referencia_recibida = 1;
+    =}
+
+    reaction(medicion) {=
+        self->ultima_medicion = medicion->value;
+        self->medicion_recibida = 1;
+    =}
+
+    reaction(controller_timer) -> error, empuje {=
+        if (self->referencia_recibida &&
+            self->medicion_recibida) {
+
+            // Error en m/s.
+            double e =
+                self->ultima_referencia - self->ultima_medicion;
+
+            // Comando adimensional antes de saturar.
+            double u = self->kp * e;
+
+            // Saturación al intervalo [0, 1].
+            if (u < 0.0) {
+                u = 0.0;
+            } else if (u > 1.0) {
+                u = 1.0;
+            }
+
+            self->calculos++;
+
+            printf(
+                "[Controlador] Calculo %d | ref=%.2f m/s"
+                " | med=%.2f m/s\n",
+                self->calculos,
+                self->ultima_referencia,
+                self->ultima_medicion
+            );
+
+            lf_set(error, e);
+            lf_set(empuje, u);
+        } else {
+            printf("[Controlador] Esperando entradas iniciales\n");
+        }
+    =}
+}
+
+reactor MonitorPrueba {
+    input error: double
+    input empuje: double
+
+    reaction(error, empuje) {=
+        if (error->is_present && empuje->is_present) {
+            printf(
+                "[Monitor] error=%.2f m/s | empuje=%.3f\n",
+                error->value,
+                empuje->value
+            );
+        }
+    =}
+}
+
+main reactor PruebaControlador {
+    entradas = new EntradasPrueba()
+    controlador = new SpeedController(kp = 0.02)
+    monitor = new MonitorPrueba()
+
+    entradas.referencia -> controlador.referencia
+    entradas.medicion -> controlador.medicion
+
+    controlador.error -> monitor.error
+    controlador.empuje -> monitor.empuje
+}

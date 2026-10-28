@@ -1,0 +1,18 @@
+target C {
+    timeout: 1 sec
+}
+
+main reactor PruebaTimer {
+    state contador: int = 0
+
+    timer reloj(0, 100 ms)
+
+    reaction(startup) {=
+        printf("Inicio del programa\n");
+    =}
+
+    reaction(reloj) {=
+        self->contador++;
+        printf("Activacion periodica numero %d\n", self->contador);
+    =}
+}

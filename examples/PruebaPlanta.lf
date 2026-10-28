@@ -1,0 +1,78 @@
+target C {
+    timeout: 2 sec
+}
+
+// Publica un empuje constante una sola vez.
+reactor EmpujePrueba {
+    output empuje: double
+
+    reaction(startup) -> empuje {=
+        lf_set(empuje, 0.5);
+    =}
+}
+
+reactor AircraftDynamics {
+    input empuje: double
+    output velocidad: double
+
+    // Parámetros didácticos.
+    state ts: double = 0.01
+    state a_t: double = 20.0
+    state a_d: double = 0.1
+
+    // Estado inicial: v[0] = 80 m/s.
+    state v: double = 80.0
+    state ultimo_empuje: double = 0.0
+
+    // La primera integración ocurre después de 10 ms.
+    timer dynamics_timer(10 ms, 10 ms)
+
+    reaction(empuje) {=
+        self->ultimo_empuje = empuje->value;
+    =}
+
+    // Publica el estado inicial sin avanzar la dinámica.
+    reaction(startup) -> velocidad {=
+        lf_set(velocidad, self->v);
+    =}
+
+    reaction(dynamics_timer) -> velocidad {=
+        double aceleracion =
+            self->a_t * self->ultimo_empuje
+            - self->a_d * self->v;
+
+        self->v =
+            self->v + self->ts * aceleracion;
+
+        lf_set(velocidad, self->v);
+    =}
+}
+
+reactor MonitorPlanta {
+    input velocidad: double
+
+    state muestra: int = 0
+
+    reaction(velocidad) {=
+        // En esta prueba las publicaciones ocurren cada 10 ms,
+        // incluyendo el estado inicial en t = 0.
+        double tiempo_modelo = self->muestra * 0.01;
+
+        printf(
+            "t_modelo=%.2f s | velocidad=%.6f m/s\n",
+            tiempo_modelo,
+            velocidad->value
+        );
+
+        self->muestra++;
+    =}
+}
+
+main reactor PruebaPlanta {
+    fuente = new EmpujePrueba()
+    planta = new AircraftDynamics()
+    monitor = new MonitorPlanta()
+
+    fuente.empuje -> planta.empuje
+    planta.velocidad -> monitor.velocidad
+}
