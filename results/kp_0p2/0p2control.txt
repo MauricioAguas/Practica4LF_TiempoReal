@@ -1,4 +1,4 @@
----- Start execution on Tue Oct 27 18:33:53 2026 ---- plus 679030284 nanoseconds
+---- Start execution on Tue Oct 27 20:20:05 2026 ---- plus 925418457 nanoseconds
 t_logico_s,referencia_m_s,velocidad_m_s,medicion_m_s,error_m_s,empuje,sesgo_m_s
 0.000,100.000000,80.000000,80.000000,20.000000,1.000000,0.000000
 0.100,100.000000,81.194614,81.194614,18.805386,1.000000,0.000000
@@ -202,4 +202,4 @@ t_logico_s,referencia_m_s,velocidad_m_s,medicion_m_s,error_m_s,empuje,sesgo_m_s
 19.900,110.000000,107.317073,107.317073,2.682927,0.536585,0.000000
 20.000,110.000000,107.317073,107.317073,2.682927,0.536585,0.000000
 ---- Elapsed logical time (in nsec): 20,000,000,000
----- Elapsed physical time (in nsec): 20,000,183,191
+---- Elapsed physical time (in nsec): 20,000,239,277
